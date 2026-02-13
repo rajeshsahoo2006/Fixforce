@@ -1,0 +1,6 @@
+node_modules/
+*.vsix
+vscode-extension/apex-log-monitor/
+.sf-log/
+.sf-log_*/
+.DS_Store

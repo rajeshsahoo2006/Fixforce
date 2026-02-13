@@ -229,14 +229,36 @@ function moveLogsToAnalysisFolder() {
   }
 }
 
+function getSfEnv() {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const candidates = [
+    '/usr/local/bin',
+    '/opt/homebrew/bin',
+    path.join(home, '.volta', 'bin'),
+  ];
+  try {
+    const nvmCurrent = path.join(home, '.nvm', 'versions', 'node', 'current', 'bin');
+    if (fs.existsSync(nvmCurrent)) candidates.push(nvmCurrent);
+    const nvmDir = path.join(home, '.nvm', 'versions', 'node');
+    if (fs.existsSync(nvmDir)) {
+      const vers = fs.readdirSync(nvmDir).filter((v) => fs.existsSync(path.join(nvmDir, v, 'bin')));
+      if (vers.length) candidates.push(path.join(nvmDir, vers.sort().pop(), 'bin'));
+    }
+  } catch (_) {}
+  const extra = candidates.filter((p) => p && fs.existsSync(p)).join(path.delimiter);
+  return { ...process.env, PATH: extra ? extra + path.delimiter + (process.env.PATH || '') : process.env.PATH };
+}
+
 function getConnectedOrgs(force = false) {
-  if (!force && Date.now() < orgCache.expiresAt) return orgCache.orgs;
+  if (!force && Date.now() < orgCache.expiresAt) return { orgs: orgCache.orgs };
   try {
     const out = execSync('sf org list --json', {
       encoding: 'utf8',
       cwd: PROJECT_DIR,
       maxBuffer: 1024 * 1024,
       timeout: 60000,
+      shell: true,
+      env: getSfEnv(),
     });
     const data = JSON.parse(out?.trim() || '{}');
     const r = data?.result || data;
@@ -245,17 +267,17 @@ function getConnectedOrgs(force = false) {
       .filter((o) => o.connectedStatus === 'Connected')
       .map((o) => ({ alias: o.alias || o.username, username: o.username }));
     orgCache = { orgs, expiresAt: Date.now() + CACHE_TTL };
-    return orgs;
+    return { orgs };
   } catch (e) {
-    console.error(e.message);
-    return orgCache.orgs;
+    const err = e.stderr?.toString() || e.stdout?.toString() || e.message;
+    return { orgs: orgCache.orgs, error: err.trim() || e.message };
   }
 }
 
 function setDefaultOrg(alias) {
   if (!alias?.trim()) return { ok: false, error: 'No org selected' };
   try {
-    execSync(`sf config set target-org ${alias}`, { encoding: 'utf8', cwd: PROJECT_DIR });
+    execSync(`sf config set target-org ${alias}`, { encoding: 'utf8', cwd: PROJECT_DIR, shell: true, env: getSfEnv() });
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -289,7 +311,7 @@ function startAudit(orgAlias) {
   const org = orgAlias?.trim() || null;
   const args = ['apex', 'tail', 'log', '--debug-level', 'DEBUG'];
   if (org) args.push('--target-org', org);
-  tailProcess = spawn('sf', args, { stdio: ['ignore', 'pipe', 'pipe'], shell: true, cwd: PROJECT_DIR });
+  tailProcess = spawn('sf', args, { stdio: ['ignore', 'pipe', 'pipe'], shell: true, cwd: PROJECT_DIR, env: getSfEnv() });
   const maybeRotateLog = () => {
     if (!logFileStream?.writable || !currentLogFilePath) return;
     try {
@@ -337,24 +359,37 @@ function stopAudit() {
   return { ok: true, logPath: currentLogPath };
 }
 
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || '/', `http://localhost:${PORT}`);
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, CORS);
+    res.end();
+    return;
+  }
+
   const send = (data, code = 200) => {
-    res.writeHead(code, { 'Content-Type': 'application/json' });
+    res.writeHead(code, { ...CORS, 'Content-Type': 'application/json' });
     res.end(JSON.stringify(data));
   };
 
   if (url.pathname === '/' && req.method === 'GET') {
     fs.readFile(path.join(__dirname, 'index.html'), (err, data) => {
-      if (err) return res.writeHead(500).end('Error');
-      res.writeHead(200, { 'Content-Type': 'text/html' }).end(data);
+      if (err) return res.writeHead(500, CORS).end('Error');
+      res.writeHead(200, { ...CORS, 'Content-Type': 'text/html' }).end(data);
     });
     return;
   }
 
   if (url.pathname === '/api/orgs') {
-    const orgs = getConnectedOrgs(url.searchParams.get('refresh') === '1');
-    return send({ orgs });
+    const result = getConnectedOrgs(url.searchParams.get('refresh') === '1');
+    return send(result);
   }
 
   if (url.pathname === '/api/set-default' && req.method === 'POST') {
@@ -423,7 +458,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  res.writeHead(404).end('Not found');
+  res.writeHead(404, CORS).end('Not found');
 });
 
 server.listen(PORT, () => {

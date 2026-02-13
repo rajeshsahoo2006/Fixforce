@@ -129,18 +129,28 @@
 
     async function loadOrgs() {
       try {
-        const { orgs } = await api('/api/orgs');
+        const data = await api('/api/orgs');
+        const { orgs = [], error } = data;
         orgSelect.innerHTML = '<option value="">(Use default org)</option>';
-        orgs.forEach((o) => {
+        (orgs || []).forEach((o) => {
           const opt = document.createElement('option');
           opt.value = o.alias;
           opt.textContent = o.alias;
           orgSelect.appendChild(opt);
         });
+        if (error) {
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.textContent = '⚠ ' + (error.length > 60 ? error.slice(0, 60) + '…' : error);
+          opt.disabled = true;
+          orgSelect.appendChild(opt);
+          status.textContent = error;
+        }
         document.getElementById('loadingOverlay').classList.add('hidden');
         document.getElementById('toolbar').classList.remove('disabled');
-      } catch {
+      } catch (e) {
         orgSelect.innerHTML = '<option value="">Error loading orgs</option>';
+        status.textContent = e.message || 'Failed to fetch orgs';
         document.getElementById('loadingOverlay').classList.add('hidden');
         document.getElementById('toolbar').classList.remove('disabled');
       }

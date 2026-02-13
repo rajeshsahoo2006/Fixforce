@@ -1,0 +1,25 @@
+{
+  "name": "debugfast",
+  "displayName": "Debugfast",
+  "description": "Launch Apex Log Monitor for Salesforce debug log streaming and error analysis",
+  "version": "0.1.0",
+  "publisher": "debugfast",
+  "engines": { "vscode": "^1.74.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onCommand:debugfast.launchLogAnalysis"],
+  "main": "./extension.js",
+  "scripts": {
+    "package": "node scripts/prepackage.js && vsce package --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.2.1"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "debugfast.launchLogAnalysis",
+        "title": "Fastforce: Launch Log Analysis"
+      }
+    ]
+  }
+}

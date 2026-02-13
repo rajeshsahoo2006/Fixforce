@@ -40,3 +40,7 @@ SF_PROJECT_DIR=/path/to/your/salesforce-project npm start
 5. **Stop** – Stop the log stream
 
 Logs are written to `.sf-log/` in your Salesforce project.
+
+## VS Code Extension
+
+Install the extension from `vscode-extension/` or run `npm run package` there to create a `.vsix`. Then use **Ctrl+Shift+P** → **Fastforce: Launch Log Analysis** to open the monitor inside VS Code/Cursor.
