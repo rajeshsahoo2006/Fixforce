@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Apex Log Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      margin: 0;
+      padding: 20px;
+    }
+    h1 { font-size: 1.25rem; color: #58a6ff; }
+    .toolbar { display: flex; gap: 10px; margin: 16px 0; flex-wrap: wrap; align-items: center; }
+    select, button {
+      padding: 8px 14px;
+      font-size: 14px;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      background: #161b22;
+      color: #e6edf3;
+      cursor: pointer;
+    }
+    select { min-width: 180px; }
+    button:hover { border-color: #58a6ff; }
+    button.primary { background: #58a6ff; border-color: #58a6ff; color: #fff; }
+    button.danger { border-color: #f85149; color: #f85149; }
+    .status { font-size: 12px; color: #8b949e; margin-left: 8px; }
+    .status.ok { color: #3fb950; }
+    .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; min-height: 50vh; }
+    @media (max-width: 768px) { .panels { grid-template-columns: 1fr; } }
+    .panel {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .panel h3 { margin: 0; padding: 12px 16px; font-size: 13px; color: #8b949e; border-bottom: 1px solid #30363d; }
+    .panel-body { padding: 16px; overflow: auto; max-height: 400px; }
+    .log-view, .analysis-view { font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
+    .log-view .err { color: #f85149; font-weight: 600; }
+    .log-view .warn { color: #d29922; }
+    .analysis-view.markdown-content { white-space: normal; }
+    .analysis-view.markdown-content h2, .analysis-view.markdown-content h3 { color: #58a6ff; margin: 1em 0 0.5em; font-size: 1rem; }
+    .analysis-view.markdown-content h2 { font-size: 1.1rem; }
+    .analysis-view.markdown-content code { background: #21262d; padding: 0.2em 0.4em; border-radius: 4px; font-size: 0.9em; }
+    .analysis-view.markdown-content pre { background: #21262d; padding: 12px; border-radius: 6px; overflow-x: auto; margin: 0.5em 0; }
+    .analysis-view.markdown-content pre code { background: none; padding: 0; }
+    .analysis-view.markdown-content ul, .analysis-view.markdown-content ol { margin: 0.5em 0; padding-left: 1.5em; }
+    .analysis-view.markdown-content li { margin: 0.25em 0; }
+    .analysis-view.markdown-content strong { color: #79c0ff; }
+    .analysis-view .source-badge { font-size: 10px; color: #8b949e; margin-bottom: 8px; }
+    .analysis-view .source-badge.cursor { color: #3fb950; }
+    .loading-overlay {
+      position: fixed; inset: 0; background: rgba(13,17,23,0.9); display: flex;
+      flex-direction: column; justify-content: center; align-items: center; gap: 16px;
+      z-index: 1000; color: #8b949e;
+    }
+    .loading-overlay.hidden { display: none; }
+    .loading-overlay .spinner { width: 40px; height: 40px; border: 3px solid #30363d; border-top-color: #58a6ff; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .toolbar.disabled { pointer-events: none; opacity: 0.6; }
+  </style>
+</head>
+<body>
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="spinner"></div>
+    <span>Fetching org list…</span>
+  </div>
+  <h1>Apex Log Monitor</h1>
+  <div id="toolbar" class="toolbar disabled">
+    <select id="orgSelect"><option value="">Loading…</option></select>
+    <button id="btnSetDefault">Set Default Org</button>
+    <button id="btnStart" class="primary">Start Audit</button>
+    <button id="btnStop" class="danger">Stop</button>
+    <button id="btnAnalyze">Analyze (Cursor AI)</button>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#8b949e;">
+      <input type="checkbox" id="useCursorAgent" checked> Use Cursor Agent CLI
+    </label>
+    <span id="status" class="status"></span>
+  </div>
+  <div class="panels">
+    <div class="panel">
+      <h3>Log Output</h3>
+      <div class="panel-body"><div id="logView" class="log-view">(Start audit to stream logs)</div></div>
+    </div>
+    <div class="panel">
+      <h3>Analysis</h3>
+      <div class="panel-body"><div id="analysisView" class="analysis-view">(Click Analyze to scan logs for errors)</div></div>
+    </div>
+  </div>
+
+  <script>
+    const orgSelect = document.getElementById('orgSelect');
+    const btnSetDefault = document.getElementById('btnSetDefault');
+    const btnStart = document.getElementById('btnStart');
+    const btnStop = document.getElementById('btnStop');
+    const btnAnalyze = document.getElementById('btnAnalyze');
+    const status = document.getElementById('status');
+    const logView = document.getElementById('logView');
+    const analysisView = document.getElementById('analysisView');
+
+    let pollInterval = null;
+
+    async function api(path, method = 'GET', body = null) {
+      const res = await fetch(path, body ? { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { method });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    function html(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function highlight(s) {
+      return html(s)
+        .replace(/\|EXCEPTION_THROWN(?!\w)/g, '<span class="err">$&</span>')
+        .replace(/\|FATAL_ERROR(?!\w)/g, '<span class="err">$&</span>')
+        .replace(/\|VALIDATION_FAIL(?!\w)/g, '<span class="err">$&</span>')
+        .replace(/\|VALIDATION_FORMULA(?!\w)/g, '<span class="warn">$&</span>');
+    }
+
+    async function loadOrgs() {
+      try {
+        const { orgs } = await api('/api/orgs');
+        orgSelect.innerHTML = '<option value="">(Use default org)</option>';
+        orgs.forEach((o) => {
+          const opt = document.createElement('option');
+          opt.value = o.alias;
+          opt.textContent = o.alias;
+          orgSelect.appendChild(opt);
+        });
+        document.getElementById('loadingOverlay').classList.add('hidden');
+        document.getElementById('toolbar').classList.remove('disabled');
+      } catch {
+        orgSelect.innerHTML = '<option value="">Error loading orgs</option>';
+        document.getElementById('loadingOverlay').classList.add('hidden');
+        document.getElementById('toolbar').classList.remove('disabled');
+      }
+    }
+
+    btnSetDefault.onclick = async () => {
+      const org = orgSelect.value?.trim();
+      if (!org) { status.textContent = 'Select an org first'; return; }
+      try {
+        const r = await api('/api/set-default', 'POST', { org });
+        status.textContent = r.ok ? 'Default org set' : r.error;
+        status.className = r.ok ? 'status ok' : 'status';
+      } catch (e) {
+        status.textContent = e.message;
+      }
+    };
+
+    btnStart.onclick = async () => {
+      status.textContent = 'Starting…';
+      try {
+        await api('/api/start', 'POST', { org: orgSelect.value?.trim() || undefined });
+        status.textContent = 'Audit running';
+        status.className = 'status ok';
+        pollInterval = setInterval(async () => {
+          const { logs } = await api('/api/logs');
+          logView.innerHTML = logs ? highlight(logs) : '(Waiting for logs…)';
+          logView.scrollTop = logView.scrollHeight;
+        }, 500);
+      } catch (e) {
+        status.textContent = e.message;
+      }
+    };
+
+    btnStop.onclick = async () => {
+      clearInterval(pollInterval);
+      pollInterval = null;
+      await api('/api/stop', 'POST').catch(() => {});
+      status.textContent = 'Stopped';
+    };
+
+    btnAnalyze.onclick = async () => {
+      const { logs } = await api('/api/logs');
+      analysisView.innerHTML = '<span>Analyzing… ' + (document.getElementById('useCursorAgent').checked ? 'Cursor Agent (30–60s)' : 'Regex') + '</span>';
+      analysisView.classList.remove('markdown-content');
+      try {
+        const useAgent = document.getElementById('useCursorAgent').checked;
+        const { report, source, agentError } = await api('/api/analyze', 'POST', {
+          logContent: logs || undefined,
+          useCursorAgent: useAgent,
+        });
+        if (source === 'cursor-agent' && typeof marked !== 'undefined') {
+          analysisView.classList.add('markdown-content');
+          const badge = '<div class="source-badge cursor">✓ Cursor Agent analysis</div>';
+          analysisView.innerHTML = badge + marked.parse(report || '');
+        } else if (source === 'regex' && agentError) {
+          analysisView.classList.add('markdown-content');
+          analysisView.innerHTML = '<div class="source-badge">Regex fallback (Agent: ' + html(agentError) + ')</div><pre>' + html(report || '') + '</pre>';
+        } else {
+          analysisView.classList.add('markdown-content');
+          const badge = source === 'regex' ? '<div class="source-badge">Regex analysis</div>' : '';
+          analysisView.innerHTML = badge + (typeof marked !== 'undefined' && /^#|```|\*\*/.test(report || '') ? marked.parse(report || '') : '<pre>' + html(report || '') + '</pre>');
+        }
+      } catch (e) {
+        analysisView.textContent = 'Error: ' + e.message;
+      }
+    };
+
+    loadOrgs();
+  </script>
+</body>
+</html>

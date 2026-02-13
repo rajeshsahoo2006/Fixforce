@@ -1,0 +1,10 @@
+{
+  "name": "apex-log-monitor",
+  "version": "1.0.0",
+  "description": "Stream Apex debug logs and scan for errors",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "start:sample": "SF_PROJECT_DIR=/Users/rsahoo/Documents/Sample node server.js"
+  }
+}
