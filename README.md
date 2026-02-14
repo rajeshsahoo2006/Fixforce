@@ -10,7 +10,55 @@ Apex Log Monitor – stream debug logs and analyze for errors.
 - **Salesforce project** – You must run from a project directory containing `sfdx-project.json`, or set `SF_PROJECT_DIR` to point to one
 - **Authenticated org** – At least one org connected via `sf org login web` or `sf auth login`
 - **Cursor Agent CLI** (optional) – For AI-powered log analysis; app falls back to regex if unavailable
-  - Install: `curl https://cursor.com/install -fsS | bash`
+
+## Cursor Agent CLI – Install & Login
+
+### macOS
+
+```bash
+# Install
+curl https://cursor.com/install -fsS | bash
+
+# Add to PATH (if not already)
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc
+source ~/.zshrc
+
+# Login (opens browser)
+agent login
+
+# Verify
+agent status
+```
+
+### Windows
+
+**PowerShell (native):**
+```powershell
+# Install
+irm 'https://cursor.com/install?win32=true' | iex
+
+# Login (opens browser)
+agent login
+
+# Verify
+agent status
+```
+
+**WSL / Linux:** Use the macOS instructions (curl install).
+
+### Login options
+
+- **Browser login** (default): `agent login` — opens browser to sign in with your Cursor account
+- **No browser**: Set `NO_OPEN_BROWSER=1` before `agent login` to get a device code/link instead
+- **API key**: For scripts/CI, set `CURSOR_API_KEY` or use `agent --api-key <key>`
+- **Logout**: `agent logout`
+
+### Verify installation
+
+```bash
+agent --version
+agent models
+```
 
 ## Quick Start
 
