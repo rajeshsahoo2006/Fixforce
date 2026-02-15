@@ -175,9 +175,17 @@
         status.textContent = 'Audit running';
         status.className = 'status ok';
         pollInterval = setInterval(async () => {
-          const { logs } = await api('/api/logs');
-          logView.innerHTML = logs ? highlight(logs) : '(Waiting for logs…)';
-          logView.scrollTop = logView.scrollHeight;
+          try {
+            const { logs, tailError } = await api('/api/logs');
+            if (tailError) {
+              status.textContent = 'Error: ' + tailError;
+              status.className = 'status';
+              logView.innerHTML = '<span class="err">' + html(tailError) + '</span>';
+            } else {
+              logView.innerHTML = logs ? highlight(logs) : '(Waiting for logs…)';
+              logView.scrollTop = logView.scrollHeight;
+            }
+          } catch (_) {}
         }, 500);
       } catch (e) {
         status.textContent = e.message;

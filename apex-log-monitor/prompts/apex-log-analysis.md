@@ -4,8 +4,8 @@ You are analyzing Salesforce Apex debug logs for errors. Follow these steps:
 
 ## 1. Refer to the Log Folder
 
-- The log folder path is provided in the Context section at the end of this prompt (e.g. `.sf-log` or `.sf-log_Analysis` in the project root).
-- Read all `.log` files in `.sf-log`, starting with the most recent.
+- The log folder is `.sf-log_Analysis` (full path provided in the Context section below).
+- Read all `.log` files in `.sf-log_Analysis`, starting with the most recent.
 - Focus on the latest log file if multiple exist.
 
 ## 2. Show the Errors

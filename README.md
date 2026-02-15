@@ -87,8 +87,11 @@ SF_PROJECT_DIR=/path/to/your/salesforce-project npm start
 4. **Analyze** – Run error scan (Cursor AI if available, otherwise regex)
 5. **Stop** – Stop the log stream
 
-Logs are written to `.sf-log/` in your Salesforce project.
+**Folder structure (in your Salesforce project):**
+- `.sf-log` – live logs (rotates at 1 MB)
+- `.sf-log_Analysis` – logs moved here when you click **Analyze**; AI reads from this folder
+- `.sf-log_archive` – on app load, existing logs are archived here (timestamped subfolders)
 
 ## VS Code Extension
 
-Install the extension from `vscode-extension/` or run `npm run package` there to create a `.vsix`. Then use **Ctrl+Shift+P** → **Fastforce: Launch Log Analysis** to open the monitor inside VS Code/Cursor.
+Install the extension from `vscode-extension/` or run `npm run package` there to create a `.vsix`. Then use **Ctrl+Shift+P** → **Debugfast: Launch Log Analysis** to open the monitor inside VS Code/Cursor.

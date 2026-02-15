@@ -35,8 +35,9 @@ if (!PROJECT_DIR) {
   process.exit(1);
 }
 
-const SF_LOG_DIR = path.join(PROJECT_DIR, '.sf-log');
-const SF_LOG_ANALYSIS_DIR = path.join(PROJECT_DIR, '.sf-log_Analysis');
+const SF_LOG_DIR = path.join(PROJECT_DIR, '.sf-log');           // Main: live logs
+const SF_LOG_ARCHIVE_DIR = path.join(PROJECT_DIR, '.sf-log_archive');  // Archive: on app load
+const SF_LOG_ANALYSIS_DIR = path.join(PROJECT_DIR, '.sf-log_Analysis'); // Analysis: on Analyze click
 const LOG_ROTATE_SIZE_BYTES = 1 * 1024 * 1024; // 1 MB
 const PROMPT_FILE = path.join(__dirname, 'prompts', 'apex-log-analysis.md');
 
@@ -97,8 +98,8 @@ function analyzeWithCursorAgent(logDir, callback) {
   }
   const promptContent = fs.readFileSync(PROMPT_FILE, 'utf8');
   const workspaceDir = PROJECT_DIR;
-  const logDirRef = path.relative(workspaceDir, logDir) || path.basename(logDir);
-  const fullPrompt = `${promptContent}\n\n---\nContext: The log folder path is ${logDirRef}. Analyze it now.`;
+  const logDirAbs = path.resolve(logDir);
+  const fullPrompt = `${promptContent}\n\n---\nContext: Analyze the log files in \`.sf-log_Analysis\`. Full path: ${logDirAbs}\n\nRead all .log files in this folder, starting with the most recent. Analyze them now.`;
   const args = [
     '--print',
     '--output-format', 'text',
@@ -136,6 +137,7 @@ let logBuffer = [];
 let logFileStream = null;
 let currentLogPath = null;
 let currentLogFilePath = null;
+let lastTailError = null;
 let orgCache = { orgs: [], expiresAt: 0 };
 const CACHE_TTL = 2 * 60 * 1000;
 
@@ -145,22 +147,31 @@ function ensureSfLogDir() {
   }
 }
 
-function archiveOldLogsBeforeAudit() {
-  if (!fs.existsSync(SF_LOG_DIR)) return;
-  const files = fs.readdirSync(SF_LOG_DIR);
-  const logFiles = files.filter((f) => f.endsWith('.log') || f.endsWith('.log.gz'));
-  if (logFiles.length === 0) return;
+/** Archive: On app load, move all logs from .sf-log and .sf-log_Analysis into .sf-log_archive */
+function archiveOnAppLoad() {
   const ts = new Date();
-  const date = ts.toISOString().slice(0, 10);
-  const time = [ts.getHours(), ts.getMinutes(), ts.getSeconds()].map((n) => String(n).padStart(2, '0')).join('-');
-  const archiveDir = path.join(PROJECT_DIR, `.sf-log_${date}_${time}`);
-  fs.mkdirSync(archiveDir, { recursive: true });
-  for (const f of logFiles) {
-    fs.renameSync(path.join(SF_LOG_DIR, f), path.join(archiveDir, f));
-  }
+  const batch = ts.toISOString().slice(0, 10) + '_' + [ts.getHours(), ts.getMinutes(), ts.getSeconds()].map((n) => String(n).padStart(2, '0')).join('-');
+  const batchDir = path.join(SF_LOG_ARCHIVE_DIR, batch);
+  let hasAny = false;
+  const moveFiles = (srcDir) => {
+    if (!fs.existsSync(srcDir)) return;
+    const files = (fs.readdirSync(srcDir) || []).filter((f) => {
+      try { return fs.statSync(path.join(srcDir, f)).isFile() && (f.endsWith('.log') || f.endsWith('.log.gz')); } catch { return false; }
+    });
+    for (const f of files) {
+      try {
+        fs.mkdirSync(batchDir, { recursive: true });
+        fs.renameSync(path.join(srcDir, f), path.join(batchDir, f));
+        hasAny = true;
+      } catch (_) {}
+    }
+  };
+  moveFiles(SF_LOG_DIR);
+  moveFiles(SF_LOG_ANALYSIS_DIR);
 }
 
-function prepareLogsForAnalysis() {
+/** Flush current log stream so files can be moved */
+function flushCurrentLogStream() {
   if (logFileStream?.writable) {
     try { logFileStream.end(); } catch (e) {}
     logFileStream = null;
@@ -168,52 +179,22 @@ function prepareLogsForAnalysis() {
   }
 }
 
-function createArchiveDir() {
-  const ts = new Date();
-  const date = ts.toISOString().slice(0, 10);
-  const time = [ts.getHours(), ts.getMinutes(), ts.getSeconds()].map((n) => String(n).padStart(2, '0')).join('-');
-  return path.join(PROJECT_DIR, `.sf-log_archive_${date}_${time}`);
-}
-
+/**
+ * Analysis: When user clicks Analyze:
+ * 1. Move all logs from .sf-log to .sf-log_Analysis
+ * 2. Analysis uses files in .sf-log_Analysis
+ */
 function moveLogsToAnalysisFolder() {
-  prepareLogsForAnalysis();
+  flushCurrentLogStream();
   ensureSfLogDir();
-  const hasAnalysisFiles = fs.existsSync(SF_LOG_ANALYSIS_DIR) && (fs.readdirSync(SF_LOG_ANALYSIS_DIR) || []).length > 0;
+  if (!fs.existsSync(SF_LOG_ANALYSIS_DIR)) fs.mkdirSync(SF_LOG_ANALYSIS_DIR, { recursive: true });
   const mainFiles = (fs.readdirSync(SF_LOG_DIR) || []).filter((f) => {
-    try { return fs.statSync(path.join(SF_LOG_DIR, f)).isFile(); } catch { return false; }
+    try { return fs.statSync(path.join(SF_LOG_DIR, f)).isFile() && (f.endsWith('.log') || f.endsWith('.log.gz')); } catch { return false; }
   });
-  const hasMainFiles = mainFiles.length > 0;
-  const archiveDir = (hasAnalysisFiles || hasMainFiles) ? createArchiveDir() : null;
-  if (archiveDir && hasAnalysisFiles) {
-    fs.mkdirSync(path.join(archiveDir, 'analysis'), { recursive: true });
-    for (const f of fs.readdirSync(SF_LOG_ANALYSIS_DIR)) {
-      const p = path.join(SF_LOG_ANALYSIS_DIR, f);
-      if (fs.statSync(p).isFile()) {
-        fs.renameSync(p, path.join(archiveDir, 'analysis', f));
-      }
-    }
-  }
-  if (!fs.existsSync(SF_LOG_ANALYSIS_DIR)) {
-    fs.mkdirSync(SF_LOG_ANALYSIS_DIR, { recursive: true });
-  }
-  if (archiveDir && hasMainFiles) {
-    fs.mkdirSync(path.join(archiveDir, 'main'), { recursive: true });
-    for (const f of mainFiles) {
-      const src = path.join(SF_LOG_DIR, f);
-      try {
-        fs.renameSync(src, path.join(archiveDir, 'main', f));
-      } catch (_) {}
-    }
-  }
-  const mainArchivePath = archiveDir ? path.join(archiveDir, 'main') : null;
-  if (mainArchivePath && fs.existsSync(mainArchivePath)) {
-    for (const f of fs.readdirSync(mainArchivePath)) {
-      const src = path.join(mainArchivePath, f);
-      const dest = path.join(SF_LOG_ANALYSIS_DIR, f);
-      try {
-        fs.copyFileSync(src, dest);
-      } catch (_) {}
-    }
+  for (const f of mainFiles) {
+    try {
+      fs.renameSync(path.join(SF_LOG_DIR, f), path.join(SF_LOG_ANALYSIS_DIR, f));
+    } catch (_) {}
   }
   if (tailProcess) {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -285,6 +266,7 @@ function setDefaultOrg(alias) {
 }
 
 function startAudit(orgAlias) {
+  lastTailError = null;
   if (tailProcess) {
     tailProcess.kill('SIGTERM');
     tailProcess = null;
@@ -296,7 +278,6 @@ function startAudit(orgAlias) {
   logBuffer = [];
   currentLogPath = null;
   currentLogFilePath = null;
-  archiveOldLogsBeforeAudit();
   ensureSfLogDir();
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const logFileName = `apex-${timestamp}.log`;
@@ -312,6 +293,10 @@ function startAudit(orgAlias) {
   const args = ['apex', 'tail', 'log', '--debug-level', 'DEBUG'];
   if (org) args.push('--target-org', org);
   tailProcess = spawn('sf', args, { stdio: ['ignore', 'pipe', 'pipe'], shell: true, cwd: PROJECT_DIR, env: getSfEnv() });
+  tailProcess.on('error', (err) => {
+    lastTailError = err.message;
+    tailProcess = null;
+  });
   const maybeRotateLog = () => {
     if (!logFileStream?.writable || !currentLogFilePath) return;
     try {
@@ -348,6 +333,7 @@ function startAudit(orgAlias) {
 }
 
 function stopAudit() {
+  lastTailError = null;
   if (tailProcess) {
     tailProcess.kill('SIGTERM');
     tailProcess = null;
@@ -406,7 +392,8 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
-      const { org } = JSON.parse(body || '{}');
+      let org;
+      try { org = JSON.parse(body || '{}').org; } catch (_) { org = undefined; }
       send(startAudit(org));
     });
     return;
@@ -417,7 +404,7 @@ const server = http.createServer((req, res) => {
   }
 
   if (url.pathname === '/api/logs') {
-    return send({ logs: logBuffer.join(''), logPath: currentLogPath });
+    return send({ logs: logBuffer.join(''), logPath: currentLogPath, tailError: lastTailError });
   }
 
   if (url.pathname === '/api/analyze' && req.method === 'POST') {
@@ -462,7 +449,11 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
+  ensureSfLogDir();
+  if (!fs.existsSync(SF_LOG_ANALYSIS_DIR)) fs.mkdirSync(SF_LOG_ANALYSIS_DIR, { recursive: true });
+  if (!fs.existsSync(SF_LOG_ARCHIVE_DIR)) fs.mkdirSync(SF_LOG_ARCHIVE_DIR, { recursive: true });
+  archiveOnAppLoad();
   console.log(`Apex Log Monitor: http://localhost:${PORT}`);
   console.log(`Project: ${PROJECT_DIR}`);
-  console.log(`Logs: ${SF_LOG_DIR}`);
+  console.log(`Logs: ${SF_LOG_DIR} | Analysis: ${SF_LOG_ANALYSIS_DIR} | Archive: ${SF_LOG_ARCHIVE_DIR}`);
 });

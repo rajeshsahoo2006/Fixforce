@@ -18,7 +18,7 @@
     "commands": [
       {
         "command": "debugfast.launchLogAnalysis",
-        "title": "Fastforce: Launch Log Analysis"
+        "title": "Debugfast: Launch Log Analysis"
       }
     ]
   }
