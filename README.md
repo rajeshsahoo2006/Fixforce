@@ -1,5 +1,9 @@
 # Debugfast
 
+**A Cursor Extension by Rajesh Sahoo** — AI-powered Salesforce Apex log monitoring & analysis.
+
+> 📊 [View Presentation](https://github.com/rajeshsahoo2006/hackathon_presentation) · 🎬 [Watch Demo](https://github.com/rajeshsahoo2006/Debugfast-Demo)
+
 Apex Log Monitor – stream debug logs and analyze for errors.
 
 ## Prerequisites
